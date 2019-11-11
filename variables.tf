@@ -92,6 +92,16 @@ variable "ecs_subnet_ids" {
   type        = list(string)
 }
 
+variable "ecs_security_group_id" {
+  default = ""
+  description = "BYO security group, otherwise will create a new one"
+}
+
+variable "enable_security_group_outbound_all" {
+  default = true
+  description = "Should we create a rule that can go out to any port?"
+}
+
 variable "fargate_task_cpu" {
   description = "Number of cpu units used in initial task definition. Default is minimum."
   default     = 256
@@ -102,6 +112,11 @@ variable "fargate_task_memory" {
   description = "Amount (in MiB) of memory used in initial task definition. Default is minimum."
   default     = 512
   type        = string
+}
+
+variable "task_network_mode" {
+  description = "The type of networking for the container.  will be awsvpc if using fargate"
+  default = "network"
 }
 
 variable "tasks_desired_count" {

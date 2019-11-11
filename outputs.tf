@@ -1,6 +1,6 @@
 output "ecs_security_group_id" {
   description = "Security Group ID assigned to the ECS tasks."
-  value       = aws_security_group.ecs_sg.id
+  value       =  local.security_group
 }
 
 output "task_execution_role_arn" {

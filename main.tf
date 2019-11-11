@@ -218,6 +218,7 @@ resource "aws_cloudwatch_metric_alarm" "alarm_mem_no_lb" {
 #
 
 resource "aws_security_group" "ecs_sg" {
+  count = local.has_byo_sg ? 0 : 1
   name        = "ecs-${var.name}-${var.environment}"
   description = "${var.name}-${var.environment} container security group"
   vpc_id      = var.ecs_vpc_id
@@ -229,9 +230,15 @@ resource "aws_security_group" "ecs_sg" {
   }
 }
 
+locals {
+  has_byo_sg = var.ecs_security_group_id != ""
+  security_group = local.has_byo_sg ? var.ecs_security_group_id : aws_security_group.ecs_sg[0].id
+}
+
 resource "aws_security_group_rule" "app_ecs_allow_outbound" {
+  count = var.enable_security_group_outbound_all ? 1 : 0
   description       = "All outbound"
-  security_group_id = aws_security_group.ecs_sg.id
+  security_group_id = local.security_group
 
   type        = "egress"
   from_port   = 0
@@ -240,24 +247,12 @@ resource "aws_security_group_rule" "app_ecs_allow_outbound" {
   cidr_blocks = ["0.0.0.0/0"]
 }
 
-resource "aws_security_group_rule" "app_ecs_allow_https_from_alb" {
-  count = var.associate_alb ? 1 : 0
-
-  description       = "Allow in ALB"
-  security_group_id = aws_security_group.ecs_sg.id
-
-  type                     = "ingress"
-  from_port                = var.container_port
-  to_port                  = var.container_port
-  protocol                 = "tcp"
-  source_security_group_id = var.alb_security_group
-}
 
 resource "aws_security_group_rule" "app_ecs_allow_health_check_from_alb" {
   count = var.associate_alb && var.container_health_check_port > 0 ? 1 : 0
 
   description       = "Allow in health check from ALB"
-  security_group_id = aws_security_group.ecs_sg.id
+  security_group_id = local.security_group
 
   type                     = "ingress"
   from_port                = var.container_health_check_port
@@ -270,7 +265,7 @@ resource "aws_security_group_rule" "app_ecs_allow_tcp_from_nlb" {
   count = var.associate_nlb ? 1 : 0
 
   description       = "Allow in NLB"
-  security_group_id = aws_security_group.ecs_sg.id
+  security_group_id = local.security_group
 
   type        = "ingress"
   from_port   = var.container_port
@@ -283,7 +278,7 @@ resource "aws_security_group_rule" "app_ecs_allow_health_check_from_nlb" {
   count = var.associate_nlb && var.container_health_check_port > 0 ? 1 : 0
 
   description       = "Allow in health check from NLB"
-  security_group_id = aws_security_group.ecs_sg.id
+  security_group_id = local.security_group
 
   type        = "ingress"
   from_port   = var.container_health_check_port
@@ -444,7 +439,7 @@ data "aws_region" "current" {
 # tested. We expect deployments will manage the future container definitions.
 resource "aws_ecs_task_definition" "main" {
   family        = "${var.name}-${var.environment}"
-  network_mode  = "awsvpc"
+  network_mode  = var.task_network_mode
   task_role_arn = aws_iam_role.task_role.arn
 
   # Fargate requirements
@@ -461,7 +456,7 @@ resource "aws_ecs_task_definition" "main" {
       cpu,
       memory,
       execution_role_arn,
-      container_definitions,
+      # container_definitions,
     ]
   }
 }
@@ -474,7 +469,6 @@ data "aws_ecs_task_definition" "main" {
 
 locals {
   ecs_service_launch_type = var.ecs_use_fargate ? "FARGATE" : "EC2"
-
   ecs_service_ordered_placement_strategy = {
     EC2 = [
       {
@@ -534,11 +528,16 @@ resource "aws_ecs_service" "main" {
     }
   }
 
-  network_configuration {
-    subnets          = var.ecs_subnet_ids
-    security_groups  = [aws_security_group.ecs_sg.id]
-    assign_public_ip = false
+  dynamic "network_configuration" {
+
+    for_each = var.task_network_mode == "awsvpc" ? toset([""]) : toset([])
+    content {
+      subnets          = var.ecs_subnet_ids
+      security_groups  = [local.security_group]
+      assign_public_ip = false
+    }
   }
+
 
   load_balancer {
     target_group_arn = var.lb_target_group
@@ -546,9 +545,9 @@ resource "aws_ecs_service" "main" {
     container_port   = var.container_port
   }
 
-  lifecycle {
-    ignore_changes = [task_definition]
-  }
+  # lifecycle {
+  #   ignore_changes = [task_definition]
+  # }
 }
 
 # NOTE: We have to duplicate this resource with a count instead of parameterizing
@@ -593,7 +592,7 @@ resource "aws_ecs_service" "main_no_lb" {
 
   network_configuration {
     subnets          = var.ecs_subnet_ids
-    security_groups  = [aws_security_group.ecs_sg.id]
+    security_groups  = [local.security_group]
     assign_public_ip = false
   }
 
